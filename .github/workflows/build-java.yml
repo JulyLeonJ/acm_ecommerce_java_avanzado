@@ -145,6 +145,9 @@ jobs:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}
       CODEBUILD_RUNNER_PROJECT: ${{ vars.CODEBUILD_RUNNER_PROJECT }}
+      SPRING_DATASOURCE_URL: ${{ vars.SPRING_DATASOURCE_URL }}
+      SPRING_DATASOURCE_USERNAME: ${{ vars.SPRING_DATASOURCE_USERNAME }}
+      DB_SECRET_ARN: ${{ vars.DB_SECRET_ARN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -158,16 +161,22 @@ jobs:
       - name: Validate deployment variables
         shell: bash
         run: |
-          for variable in CODEBUILD_RUNNER_PROJECT ECR_REPOSITORY ECS_CLUSTER ECS_SERVICE; do
+          for variable in CODEBUILD_RUNNER_PROJECT ECR_REPOSITORY ECS_CLUSTER ECS_SERVICE SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME DB_SECRET_ARN; do
             if [[ -z "${!variable}" ]]; then
               echo "Missing GitHub Actions variable: $variable"
               exit 1
             fi
           done
           if grep -q 'REPLACE_WITH_' ecs/task-definition.json; then
-            echo "Replace the ECS role and database-secret placeholders in ecs/task-definition.json."
+            echo "Replace the ECS task execution role placeholder in ecs/task-definition.json."
             exit 1
           fi
+
+      - name: Start Docker daemon
+        shell: bash
+        run: |
+          nohup /usr/local/bin/dockerd --host=unix:///var/run/docker.sock &
+          timeout 20 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
 
       - name: Build and push image to ECR
         id: image
@@ -189,7 +198,13 @@ jobs:
         run: |
           task_definition="$RUNNER_TEMP/task-definition.json"
           jq --arg image "$IMAGE_URI" \
-            '(.containerDefinitions[] | select(.name == "acm-ecommerce").image) = $image' \
+            --arg dbUrl "$SPRING_DATASOURCE_URL" \
+            --arg dbUser "$SPRING_DATASOURCE_USERNAME" \
+            --arg dbSecretArn "$DB_SECRET_ARN" \
+            '(.containerDefinitions[] | select(.name == "acm-ecommerce").image) = $image
+            | (.containerDefinitions[] | select(.name == "acm-ecommerce").environment[] | select(.name == "SPRING_DATASOURCE_URL").value) = $dbUrl
+            | (.containerDefinitions[] | select(.name == "acm-ecommerce").environment[] | select(.name == "SPRING_DATASOURCE_USERNAME").value) = $dbUser
+            | (.containerDefinitions[] | select(.name == "acm-ecommerce").secrets[] | select(.name == "SPRING_DATASOURCE_PASSWORD").valueFrom) = ($dbSecretArn + ":password::")' \
             ecs/task-definition.json > "$task_definition"
 
           task_definition_arn=$(aws ecs register-task-definition \

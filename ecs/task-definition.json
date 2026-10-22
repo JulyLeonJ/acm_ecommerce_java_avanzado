@@ -22,18 +22,20 @@
           "protocol": "tcp"
         }
       ],
-      "secrets": [
+      "environment": [
         {
           "name": "SPRING_DATASOURCE_URL",
-          "valueFrom": "REPLACE_WITH_DB_SECRET_ARN:url::"
+          "value": "REPLACED_BY_GITHUB_VARIABLE"
         },
         {
           "name": "SPRING_DATASOURCE_USERNAME",
-          "valueFrom": "REPLACE_WITH_DB_SECRET_ARN:username::"
-        },
+          "value": "REPLACED_BY_GITHUB_VARIABLE"
+        }
+      ],
+      "secrets": [
         {
           "name": "SPRING_DATASOURCE_PASSWORD",
-          "valueFrom": "REPLACE_WITH_DB_SECRET_ARN:password::"
+          "valueFrom": "REPLACED_BY_GITHUB_VARIABLE"
         }
       ],
       "logConfiguration": {

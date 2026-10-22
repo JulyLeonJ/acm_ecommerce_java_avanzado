@@ -8,7 +8,7 @@ La región del proyecto es `us-east-2`. La API se mantendrá privada, como se ac
 2. Autoriza la conexión CodeConnections `acm-ecommerce-github` que ya quedó creada en estado `PENDING`. En la consola de AWS, abre **Developer Tools > Settings > Connections**, selecciona esa conexión, elige **Update pending connection**, instala/autoriza **AWS Connector for GitHub** para `JulyLeonJ/acm_ecommerce_java_avanzado` y termina con **Connect**. Hazlo con la sesión de GitHub propietaria del repositorio.
 3. Crea un CodeBuild **Runner project** llamado `acm-ecommerce-deploy-runner`, vinculado a ese repositorio/conexión y configurado para eventos `WORKFLOW_JOB_QUEUED`. Habilita el modo privilegiado de Docker en el entorno de build porque el job construye imágenes.
 4. Asocia un service role de CodeBuild con permisos limitados para usar la conexión, publicar en el repositorio ECR, registrar la definición de tarea, actualizar/describir el servicio ECS y pasar solo el ECS task execution role. CodeBuild usa ese rol para entregar credenciales temporales al runner.
-5. Crea RDS PostgreSQL no pública y guarda un secreto JSON en Secrets Manager con `url`, `username` y `password`. `url` debe contener la URL JDBC completa, por ejemplo `jdbc:postgresql://HOST_RDS:5432/ecommerce`. El Security Group de RDS solo debe permitir TCP 5432 desde el Security Group de las tareas.
+5. Crea RDS PostgreSQL no pública con contraseña administrada por RDS/Secrets Manager. El workflow recibirá el ARN de ese secreto y ECS leerá el campo `password`; la URL JDBC y el nombre de usuario son variables GitHub no secretas. El Security Group de RDS solo debe permitir TCP 5432 desde el Security Group de las tareas.
 6. Crea un ECS task execution role con permisos para descargar de ECR, enviar logs a CloudWatch y leer ese secreto. Añade `kms:Decrypt` únicamente si el secreto usa una clave KMS propia. La aplicación actualmente no llama a APIs AWS, así que no necesita permisos adicionales en un task role.
 7. Crea el grupo CloudWatch Logs `/ecs/acm-ecommerce` con retención definida.
 8. Crea el cluster y servicio ECS/Fargate con una definición de tarea basada en `ecs/task-definition.json`, Linux `X86_64`, `0.5 vCPU / 1 GB` y el puerto `8080`.
@@ -21,7 +21,7 @@ La VPC predeterminada inventariada tiene subredes públicas en tres AZ. Para usa
 Antes de activar el workflow, edita `ecs/task-definition.json`:
 
 - Sustituye `REPLACE_WITH_ECS_TASK_EXECUTION_ROLE_ARN` por el ARN real del execution role.
-- Sustituye cada `REPLACE_WITH_DB_SECRET_ARN` por el ARN del secreto, conservando los sufijos `:url::`, `:username::` y `:password::`.
+- El workflow sustituye la imagen, URL JDBC, usuario y referencia al secreto con variables GitHub al registrar cada revisión. `DB_SECRET_ARN` debe ser el ARN del secreto administrado por RDS, sin el sufijo de clave JSON.
 - Conserva el nombre de contenedor `acm-ecommerce`, el puerto `8080` y la configuración de logs en `us-east-2`.
 
 No incluyas contraseñas ni valores del secreto en GitHub o en el repositorio. ECS los obtiene de Secrets Manager al iniciar cada tarea.
@@ -34,6 +34,9 @@ Configura estas variables en **Settings > Secrets and variables > Actions > Vari
 - `ECR_REPOSITORY`: `acm-ecommerce`.
 - `ECS_CLUSTER`: nombre del cluster.
 - `ECS_SERVICE`: nombre del servicio Fargate.
+- `SPRING_DATASOURCE_URL`: `jdbc:postgresql://ENDPOINT_RDS:5432/ecommerce`.
+- `SPRING_DATASOURCE_USERNAME`: `acm_ecommerce_admin` (o el usuario de aplicación que configures).
+- `DB_SECRET_ARN`: ARN del secreto de contraseña administrado por RDS.
 - `ECS_DEPLOY_ENABLED`: déjalo sin configurar o en `false` hasta que la conexión GitHub esté `AVAILABLE`, CodeBuild, RDS, secreto, ECS, ALB, roles, permisos y definición de tarea estén listos. Solo entonces establece `true`.
 
 El job de CI usa un PostgreSQL temporal. Para él configura los GitHub Actions secrets `DB_NAME`, `DB_USER` y `DB_PASSWORD`; no pongas en ellos las credenciales de producción. El job de despliegue corre en el CodeBuild runner, publica la imagen en ECR con el SHA del commit y actualiza el servicio ECS. No necesita `id-token: write` ni access keys AWS en GitHub.
