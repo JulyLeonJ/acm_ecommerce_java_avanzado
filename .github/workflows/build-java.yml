@@ -145,9 +145,6 @@ jobs:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}
       CODEBUILD_RUNNER_PROJECT: ${{ vars.CODEBUILD_RUNNER_PROJECT }}
-      SPRING_DATASOURCE_URL: ${{ vars.SPRING_DATASOURCE_URL }}
-      SPRING_DATASOURCE_USERNAME: ${{ vars.SPRING_DATASOURCE_USERNAME }}
-      DB_SECRET_ARN: ${{ vars.DB_SECRET_ARN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -161,7 +158,7 @@ jobs:
       - name: Validate deployment variables
         shell: bash
         run: |
-          for variable in CODEBUILD_RUNNER_PROJECT ECR_REPOSITORY ECS_CLUSTER ECS_SERVICE SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME DB_SECRET_ARN; do
+          for variable in CODEBUILD_RUNNER_PROJECT ECR_REPOSITORY ECS_CLUSTER ECS_SERVICE; do
             if [[ -z "${!variable}" ]]; then
               echo "Missing GitHub Actions variable: $variable"
               exit 1
@@ -198,13 +195,7 @@ jobs:
         run: |
           task_definition="$RUNNER_TEMP/task-definition.json"
           jq --arg image "$IMAGE_URI" \
-            --arg dbUrl "$SPRING_DATASOURCE_URL" \
-            --arg dbUser "$SPRING_DATASOURCE_USERNAME" \
-            --arg dbSecretArn "$DB_SECRET_ARN" \
-            '(.containerDefinitions[] | select(.name == "acm-ecommerce").image) = $image
-            | (.containerDefinitions[] | select(.name == "acm-ecommerce").environment[] | select(.name == "SPRING_DATASOURCE_URL").value) = $dbUrl
-            | (.containerDefinitions[] | select(.name == "acm-ecommerce").environment[] | select(.name == "SPRING_DATASOURCE_USERNAME").value) = $dbUser
-            | (.containerDefinitions[] | select(.name == "acm-ecommerce").secrets[] | select(.name == "SPRING_DATASOURCE_PASSWORD").valueFrom) = ($dbSecretArn + ":password::")' \
+            '(.containerDefinitions[] | select(.name == "acm-ecommerce").image) = $image' \
             ecs/task-definition.json > "$task_definition"
 
           task_definition_arn=$(aws ecs register-task-definition \
@@ -216,6 +207,7 @@ jobs:
             --cluster "$ECS_CLUSTER" \
             --service "$ECS_SERVICE" \
             --task-definition "$task_definition_arn" \
+            --desired-count 1 \
             --region "$AWS_REGION"
 
           aws ecs wait services-stable \

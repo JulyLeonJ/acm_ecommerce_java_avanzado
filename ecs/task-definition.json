@@ -6,7 +6,7 @@
   ],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "REPLACE_WITH_ECS_TASK_EXECUTION_ROLE_ARN",
+  "executionRoleArn": "arn:aws:iam::603052865289:role/acm-ecommerce-ecs-task-execution",
   "runtimePlatform": {
     "cpuArchitecture": "X86_64",
     "operatingSystemFamily": "LINUX"
@@ -25,17 +25,17 @@
       "environment": [
         {
           "name": "SPRING_DATASOURCE_URL",
-          "value": "REPLACED_BY_GITHUB_VARIABLE"
+          "value": "jdbc:postgresql://acm-ecommerce-postgres.cv80mq20qh53.us-east-2.rds.amazonaws.com:5432/ecommerce"
         },
         {
           "name": "SPRING_DATASOURCE_USERNAME",
-          "value": "REPLACED_BY_GITHUB_VARIABLE"
+          "value": "acm_ecommerce_admin"
         }
       ],
       "secrets": [
         {
           "name": "SPRING_DATASOURCE_PASSWORD",
-          "valueFrom": "REPLACED_BY_GITHUB_VARIABLE"
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:603052865289:secret:rds!db-268b65ac-852c-4d5e-8788-97cdb74a766c-Ulfqxw:password::"
         }
       ],
       "logConfiguration": {

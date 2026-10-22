@@ -1,45 +1,37 @@
 # Despliegue privado en ECS/Fargate
 
-La región del proyecto es `us-east-2`. La API se mantendrá privada, como se acordó. El workflow de `.github/workflows/build-java.yml` ejecuta CI, pero el job de despliegue solo se ejecutará en `main` cuando `ECS_DEPLOY_ENABLED=true`.
+La región del proyecto es `us-east-2`. La API se mantendrá privada, como se acordó. La infraestructura está preparada; el servicio ECS permanece en `desiredCount=0` hasta que la versión de este workflow se publique en GitHub y el job de despliegue se habilite.
 
 ## Recursos necesarios
 
-1. Crea un repositorio privado ECR llamado `acm-ecommerce` en `us-east-2`.
-2. Autoriza la conexión CodeConnections `acm-ecommerce-github` que ya quedó creada en estado `PENDING`. En la consola de AWS, abre **Developer Tools > Settings > Connections**, selecciona esa conexión, elige **Update pending connection**, instala/autoriza **AWS Connector for GitHub** para `JulyLeonJ/acm_ecommerce_java_avanzado` y termina con **Connect**. Hazlo con la sesión de GitHub propietaria del repositorio.
-3. Crea un CodeBuild **Runner project** llamado `acm-ecommerce-deploy-runner`, vinculado a ese repositorio/conexión y configurado para eventos `WORKFLOW_JOB_QUEUED`. Habilita el modo privilegiado de Docker en el entorno de build porque el job construye imágenes.
-4. Asocia un service role de CodeBuild con permisos limitados para usar la conexión, publicar en el repositorio ECR, registrar la definición de tarea, actualizar/describir el servicio ECS y pasar solo el ECS task execution role. CodeBuild usa ese rol para entregar credenciales temporales al runner.
-5. Crea RDS PostgreSQL no pública con contraseña administrada por RDS/Secrets Manager. El workflow recibirá el ARN de ese secreto y ECS leerá el campo `password`; la URL JDBC y el nombre de usuario son variables GitHub no secretas. El Security Group de RDS solo debe permitir TCP 5432 desde el Security Group de las tareas.
-6. Crea un ECS task execution role con permisos para descargar de ECR, enviar logs a CloudWatch y leer ese secreto. Añade `kms:Decrypt` únicamente si el secreto usa una clave KMS propia. La aplicación actualmente no llama a APIs AWS, así que no necesita permisos adicionales en un task role.
-7. Crea el grupo CloudWatch Logs `/ecs/acm-ecommerce` con retención definida.
-8. Crea el cluster y servicio ECS/Fargate con una definición de tarea basada en `ecs/task-definition.json`, Linux `X86_64`, `0.5 vCPU / 1 GB` y el puerto `8080`.
-9. Usa un ALB **interno** y un target group de tipo `ip`; el health check es `/actuator/health/readiness`. No abras listeners o Security Groups a Internet. El Security Group de tareas debe aceptar tráfico solo desde el Security Group del ALB.
+1. Existe un ECR privado `acm-ecommerce` con tags inmutables y escaneo básico al subir imágenes.
+2. La conexión CodeConnections `acm-ecommerce-github` está `AVAILABLE` para este repositorio.
+3. Existe el CodeBuild Runner `acm-ecommerce-deploy-runner`, asociado al evento `WORKFLOW_JOB_QUEUED`, con Docker privilegiado y concurrencia limitada a una ejecución. Su service role publica en ECR, actualiza el servicio ECS y pasa solo el task execution role.
+4. Existe RDS PostgreSQL 18.3 `db.t4g.micro`, Single-AZ, 20 GB gp3, cifrada, no pública y con contraseña administrada por RDS/Secrets Manager. El Security Group de RDS acepta TCP 5432 solo desde las tareas.
+5. Existe el ECS task execution role con permisos para descargar de ECR, enviar logs y leer el secreto RDS. La aplicación no llama a APIs AWS, así que no necesita permisos adicionales en un task role.
+6. Existe `/ecs/acm-ecommerce` en CloudWatch Logs con retención de 7 días.
+7. Existen el cluster `acm-ecommerce`, la definición de tarea inicial y el servicio Fargate `acm-ecommerce`. El servicio está en `desiredCount=0` hasta que el pipeline publique una imagen válida.
+8. Existe un ALB **interno** y un target group de tipo `ip`; el health check es `/actuator/health/readiness`. No hay listener público. El Security Group de tareas acepta tráfico solo desde el Security Group del ALB.
 
-La VPC predeterminada inventariada tiene subredes públicas en tres AZ. Para usar tareas sin IP pública, configura subredes privadas y salida a ECR, Secrets Manager y CloudWatch Logs mediante NAT o VPC endpoints. Ambos enfoques pueden generar cargos; compara los costos antes de elegir. Mantén RDS y las tareas en subredes privadas.
+La VPC predeterminada tenía subredes públicas en tres AZ. Se añadieron subredes privadas en `us-east-2a` y `us-east-2b` con salida por un NAT Gateway en `us-east-2a`. Las tareas no reciben IP pública; RDS y ECS usan las subredes privadas.
 
 ## Completar la definición de tarea
 
-Antes de activar el workflow, edita `ecs/task-definition.json`:
-
-- Sustituye `REPLACE_WITH_ECS_TASK_EXECUTION_ROLE_ARN` por el ARN real del execution role.
-- El workflow sustituye la imagen, URL JDBC, usuario y referencia al secreto con variables GitHub al registrar cada revisión. `DB_SECRET_ARN` debe ser el ARN del secreto administrado por RDS, sin el sufijo de clave JSON.
-- Conserva el nombre de contenedor `acm-ecommerce`, el puerto `8080` y la configuración de logs en `us-east-2`.
+`ecs/task-definition.json` contiene el ARN real del execution role, la URL privada de RDS, el usuario y la referencia al secreto administrado por RDS. El workflow solo sustituye la imagen por el SHA del commit.
 
 No incluyas contraseñas ni valores del secreto en GitHub o en el repositorio. ECS los obtiene de Secrets Manager al iniciar cada tarea.
 
 ## GitHub Actions
 
-Configura estas variables en **Settings > Secrets and variables > Actions > Variables**:
+Las siguientes variables ya están configuradas en **Settings > Secrets and variables > Actions > Variables**:
 
 - `CODEBUILD_RUNNER_PROJECT`: `acm-ecommerce-deploy-runner`.
 - `ECR_REPOSITORY`: `acm-ecommerce`.
-- `ECS_CLUSTER`: nombre del cluster.
-- `ECS_SERVICE`: nombre del servicio Fargate.
-- `SPRING_DATASOURCE_URL`: `jdbc:postgresql://ENDPOINT_RDS:5432/ecommerce`.
-- `SPRING_DATASOURCE_USERNAME`: `acm_ecommerce_admin` (o el usuario de aplicación que configures).
-- `DB_SECRET_ARN`: ARN del secreto de contraseña administrado por RDS.
-- `ECS_DEPLOY_ENABLED`: déjalo sin configurar o en `false` hasta que la conexión GitHub esté `AVAILABLE`, CodeBuild, RDS, secreto, ECS, ALB, roles, permisos y definición de tarea estén listos. Solo entonces establece `true`.
+- `ECS_CLUSTER`: `acm-ecommerce`.
+- `ECS_SERVICE`: `acm-ecommerce`.
+- `ECS_DEPLOY_ENABLED`: actualmente `false`; solo se activará cuando el cambio local del workflow esté en GitHub.
 
-El job de CI usa un PostgreSQL temporal. Para él configura los GitHub Actions secrets `DB_NAME`, `DB_USER` y `DB_PASSWORD`; no pongas en ellos las credenciales de producción. El job de despliegue corre en el CodeBuild runner, publica la imagen en ECR con el SHA del commit y actualiza el servicio ECS. No necesita `id-token: write` ni access keys AWS en GitHub.
+El job de CI usa un PostgreSQL temporal. Ya están configurados los GitHub Actions secrets `DB_NAME`, `DB_USER` y `DB_PASSWORD`; no contienen las credenciales productivas. El job de despliegue corre en el CodeBuild runner, publica la imagen en ECR con el SHA del commit y actualiza el servicio ECS. No necesita `id-token: write` ni access keys AWS en GitHub.
 
 GitHub solo ejecuta workflows dentro de `.github/workflows/`. El archivo `build-java.yml` de la raíz es una copia antigua, no el pipeline activo.
 
