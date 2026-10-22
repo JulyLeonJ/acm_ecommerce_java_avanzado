@@ -51,6 +51,36 @@ En GitHub confirmé que el workflow `CI and ECS deploy` está activo y que exist
 
 El CodeBuild Runner, ECR y RDS están en `us-east-2`. El endpoint del ALB es `internal-acm-ecommerce-internal-412399010.us-east-2.elb.amazonaws.com` y solo es accesible por red privada.
 
+## Flujo completo
+
+El push a `main` primero pasa CI. Solo si tests y build terminan correctamente se encola el job de despliegue. GitHub entrega ese job al runner efímero de CodeBuild mediante el webhook `WORKFLOW_JOB_QUEUED`; el runner obtiene credenciales temporales del service role de CodeBuild, no de GitHub OIDC ni de access keys.
+
+```mermaid
+flowchart LR
+    Dev[Push a main] --> Build[GitHub Actions: build y tests]
+    Build --> CiDb[(PostgreSQL efímero de CI)]
+    Build -->|Tests pasan; upload JAR| Artifact[Artifact de GitHub Actions]
+    Build --> Job[Job deploy-ecs encolado]
+    Job -->|Webhook WORKFLOW_JOB_QUEUED| Runner[CodeBuild Runner efímero]
+    Artifact -->|Download artifact| Runner
+    Runner <-->|GitHub App| Conn[CodeConnections]
+    Runner -->|CodeBuild service role; sin OIDC| Docker[Docker build desde Dockerfile]
+    Docker -->|Push con tag SHA| ECR[ECR acm-ecommerce]
+    Runner -->|Registrar task definition y actualizar service| ECS[ECS service acm-ecommerce]
+    ECR -->|Pull de imagen| Task[Fargate task en subred privada]
+    ECS --> Task
+    Task -->|Password al arrancar| Secret[Secrets Manager RDS secret]
+    Task -->|TCP 5432| DB[(RDS PostgreSQL privada)]
+    Task -->|awslogs| CW[CloudWatch Logs]
+    Client[Cliente en VPC o VPN] -->|HTTP privado| ALB[ALB interno]
+    ALB --> TG[Target group tipo ip]
+    TG -->|GET /actuator/health/readiness| Task
+    Smoke[Tarea Fargate temporal de prueba] -.->|GET /api/v1/products| ALB
+    Task -->|Egreso privado vía NAT| NAT[NAT Gateway]
+```
+
+La prueba de negocio usó una tarea Fargate temporal dentro de la VPC: hizo `GET /api/v1/products`, terminó con código 0 y dejó `GET_api_v1_products_succeeded` en CloudWatch. El body se descartó. El ALB no tiene listener público; un cliente fuera de la VPC requiere VPN o una ruta privada.
+
 ## Bloqueo de IAM/OIDC
 
 Las operaciones `aws iam list-open-id-connect-providers` y `aws iam create-open-id-connect-provider` fueron rechazadas con `AccessDenied`: el SCP administrado del proyecto deniega explícitamente `iam:ListOpenIDConnectProviders` e `iam:CreateOpenIDConnectProvider`. Por eso no se usará GitHub OIDC.
