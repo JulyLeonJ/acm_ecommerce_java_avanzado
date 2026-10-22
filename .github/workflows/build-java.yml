@@ -3,6 +3,9 @@ name: CI and ECS deploy
 on:
   push:
     branches: [ "*" ]
+    paths-ignore:
+      - "*.md"
+      - "**/*.md"
   pull_request:
     branches: [ "*" ]
 
