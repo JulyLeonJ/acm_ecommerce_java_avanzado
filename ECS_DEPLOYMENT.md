@@ -35,6 +35,8 @@ El job de CI usa un PostgreSQL temporal. Ya están configurados los GitHub Actio
 
 GitHub solo ejecuta workflows dentro de `.github/workflows/`. El archivo `build-java.yml` de la raíz es una copia antigua, no el pipeline activo.
 
+Los pushes a `main` que solo cambian archivos Markdown se ignoran para no reconstruir/desplegar por cambios de documentación.
+
 ## Por qué CodeBuild Runner
 
 El job `deploy-ecs` usa `runs-on: codebuild-${{ vars.CODEBUILD_RUNNER_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}`. CodeBuild aporta las credenciales temporales de su service role; el workflow no crea un proveedor IAM OIDC.

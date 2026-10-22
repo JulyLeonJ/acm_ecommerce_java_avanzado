@@ -7,7 +7,7 @@
 
 ## Trabajo en el repositorio
 
-El commit base `cd89472` contenía la preparación local inicial. El commit `fbbc9a2` con el cambio a CodeBuild Runner, task definition y documentación está publicado en `main`.
+El commit base `cd89472` contenía la preparación local inicial. El commit `fbbc9a2` cambió el despliegue a CodeBuild Runner y `a462b84` añadió el filtro para no desplegar cambios solo de Markdown; ambos están publicados en `main`.
 
 - Gradle, CI y la imagen Docker alineados con Java 25.
 - Configuración PostgreSQL mediante variables Spring, sin la contraseña fija que había en `application.yaml`.
@@ -39,15 +39,15 @@ En GitHub confirmé que el workflow `CI and ECS deploy` está activo y que exist
 
 | Recurso | Estado actual |
 | --- | --- |
-| ECR `acm-ecommerce` | Privado, tags inmutables, escaneo básico al subir y cifrado AES256; imagen `fbbc9a24a5ee2816a44474477d3670c41391d73a` (`sha256:3d3ce6fc6c6521887d1fe2649977bc68209f097bae9d5f2186b1770d036efbae`) |
+| ECR `acm-ecommerce` | Privado, tags inmutables, escaneo básico al subir y cifrado AES256; la última imagen publicada usa tag `a462b846067efa6d0286717f7feabe0fff7e1eef` |
 | CodeConnections `acm-ecommerce-github` | `AVAILABLE`, autorizado para el repositorio |
 | CodeBuild Runner `acm-ecommerce-deploy-runner` | Webhook `WORKFLOW_JOB_QUEUED` activo, workflow filtrado, Docker privilegiado y concurrencia 1 |
 | Roles IAM | Service role de CodeBuild y ECS task execution role creados con permisos específicos |
 | Red privada | Dos subredes privadas en `us-east-2a`/`us-east-2b`, route table privada y un NAT Gateway en `us-east-2a` |
 | RDS PostgreSQL | `acm-ecommerce-postgres`, 18.3, `db.t4g.micro`, Single-AZ, 20 GB gp3, cifrada y no pública; contraseña administrada por RDS/Secrets Manager |
 | CloudWatch Logs | `/ecs/acm-ecommerce`, retención de 7 días |
-| ECS | Cluster y servicio `acm-ecommerce`; task definition revisión 2; `desiredCount=1`, `runningCount=1` |
-| ALB | Interno, sin listener público; target group `ip`, task `172.31.79.149:8080` saludable en `/actuator/health/readiness` |
+| ECS | Cluster y servicio `acm-ecommerce`; task definition revisión 3; `desiredCount=1`, `runningCount=1` al último estado consultado |
+| ALB | Interno, sin listener público; target group `ip` y readiness `/actuator/health/readiness` saludable |
 
 El CodeBuild Runner, ECR y RDS están en `us-east-2`. El endpoint del ALB es `internal-acm-ecommerce-internal-412399010.us-east-2.elb.amazonaws.com` y solo es accesible por red privada.
 
@@ -72,9 +72,11 @@ El CodeBuild Runner y su webhook están configurados. La variable `ECS_DEPLOY_EN
 - `bash ./gradlew bootJar --no-daemon`: correcto.
 - YAML del workflow y Spring, JSON de ECS, sintaxis `jq` y `git diff --check`: correctos.
 - El workflow de GitHub Actions `39820672748` terminó `success`: `Start PostgreSQL`, `./gradlew clean build`, subida del artefacto, Docker build/push a ECR y actualización ECS. [Ver ejecución](https://github.com/JulyLeonJ/acm_ecommerce_java_avanzado/actions/runs/39820672748).
+- Tras añadir el filtro de cambios Markdown, el workflow `39822348582` también terminó `success`; `aws ecs wait services-stable` concluyó correctamente. [Ver última ejecución](https://github.com/JulyLeonJ/acm_ecommerce_java_avanzado/actions/runs/39822348582).
 - El CodeBuild Runner `acm-ecommerce-deploy-runner` terminó `SUCCEEDED` (build `7e66a789-c45e-450f-b810-037020b5cded`).
 - ECS `runningCount=1`; ALB reportó el target como `healthy`. Readiness incluye el health check de PostgreSQL.
 - Docker no estaba iniciado localmente; la imagen se construyó en el CodeBuild Runner. La prueba completa sí pasó en GitHub Actions con PostgreSQL temporal.
+- La sesión local de AWS CLI expiró después del despliegue final; la reconsulta posterior de `describe-services` no pudo completarse. El waiter `aws ecs wait services-stable` sí terminó exitosamente en la última ejecución.
 
 ## Seguridad y decisiones
 
