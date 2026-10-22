@@ -75,8 +75,10 @@ El CodeBuild Runner y su webhook están configurados. La variable `ECS_DEPLOY_EN
 - Tras añadir el filtro de cambios Markdown, el workflow `39822348582` también terminó `success`; `aws ecs wait services-stable` concluyó correctamente. [Ver última ejecución](https://github.com/JulyLeonJ/acm_ecommerce_java_avanzado/actions/runs/39822348582).
 - El CodeBuild Runner `acm-ecommerce-deploy-runner` terminó `SUCCEEDED` (build `7e66a789-c45e-450f-b810-037020b5cded`).
 - ECS `runningCount=1`; ALB reportó el target como `healthy`. Readiness incluye el health check de PostgreSQL.
+- Para probar la ruta de negocio sin hacer público el ALB, ejecuté una tarea Fargate temporal en las subredes privadas con `GET /api/v1/products`. Salió con código de proceso 0 y CloudWatch registró `GET_api_v1_products_succeeded`; se descartó el body de la respuesta.
 - Docker no estaba iniciado localmente; la imagen se construyó en el CodeBuild Runner. La prueba completa sí pasó en GitHub Actions con PostgreSQL temporal.
 - La sesión local de AWS CLI expiró después del despliegue final; la reconsulta posterior de `describe-services` no pudo completarse. El waiter `aws ecs wait services-stable` sí terminó exitosamente en la última ejecución.
+- Intenté adjuntar el CodeBuild Runner a la VPC para hacer el smoke test; AWS devolvió `Not authorized to perform DescribeSecurityGroups`. No amplié permisos a ciegas: la prueba GET se ejecutó en su lugar desde una tarea Fargate temporal dentro de la VPC.
 
 ## Seguridad y decisiones
 

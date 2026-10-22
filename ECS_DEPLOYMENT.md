@@ -47,7 +47,7 @@ Otra posibilidad es mover toda la orquestación a CodePipeline + CodeConnections
 
 ## Acceso y validación
 
-El ALB interno es `internal-acm-ecommerce-internal-412399010.us-east-2.elb.amazonaws.com`. No se puede abrir desde Internet ni desde una laptop sin conectividad privada a la VPC. El target group está saludable y `/actuator/health/readiness` valida que Spring y PostgreSQL estén listos. Para llamar otras rutas desde tu laptop necesitarás una conexión privada aprobada, como VPN o un bastion controlado.
+El ALB interno es `internal-acm-ecommerce-internal-412399010.us-east-2.elb.amazonaws.com`. No se puede abrir desde Internet ni desde una laptop sin conectividad privada a la VPC. El target group está saludable y `/actuator/health/readiness` valida que Spring y PostgreSQL estén listos. También se probó `GET /api/v1/products` desde una tarea Fargate temporal en la VPC; terminó correctamente y el body se descartó. Para llamar otras rutas desde tu laptop necesitarás una conexión privada aprobada, como VPN o un bastion controlado.
 
 La ruta `/actuator/health/readiness` incluye el estado de PostgreSQL. No publiques la API hasta implementar autenticación y autorización: `DisableCsrf.java` permite actualmente todas las rutas sin autenticación y desactiva CSRF.
 
