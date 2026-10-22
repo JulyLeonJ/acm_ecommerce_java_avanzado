@@ -2,14 +2,14 @@ spring:
   application:
     name: ecommerce
   datasource:
-    url: jdbc:postgresql://localhost:5434/ecommerce
-    username: store
-    password: '123456'
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5434/ecommerce}
+    username: ${SPRING_DATASOURCE_USERNAME:store}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+    show-sql: ${SPRING_JPA_SHOW_SQL:false}
     properties:
       hibernate:
         format_sql: true
@@ -18,3 +18,15 @@ springdoc:
     path: /api/v1/api-docs
   swagger-ui:
     path: /api/v1/api-docs
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db

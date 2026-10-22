@@ -1,4 +1,4 @@
-name: CI
+name: CI and ECS deploy
 
 on:
   push:
@@ -16,12 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    # -----------------------------------------------------------------------
-    # Permisos necesarios para subir (push) la imagen Docker a GitHub Packages
-    # -----------------------------------------------------------------------
     permissions:
       contents: read
-      packages: write
     # NOTE: No "services:" block here.
     # PostgreSQL is started inside a step (step 5) so that
     # ${{ secrets.* }} are available when the container is created.
@@ -36,13 +32,13 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------------------------------------
-      # 2 Set up JDK 21 (Temurin)
+      # 2 Set up JDK 25 (Temurin)
       # ---------------------------------------------------------------
-      - name: Set up JDK 21 (Temurin)
+      - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
-          java-version: "21"
+          java-version: "25"
           cache: "gradle"
 
       # ---------------------------------------------------------------
@@ -64,35 +60,29 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # ---------------------------------------------------------------
-      # Check if secrets are loading (Debugging)
-      # ---------------------------------------------------------------
-      - name: Verify Secrets Context
-        run: |
-          echo "Verificando si los secrets están llegando al runner..."
-          if [ -z "${{ secrets.DB_PASSWORD }}" ]; then
-            echo "❌ ERROR: DB_PASSWORD está vacío. GitHub no está inyectando el secret."
-          else
-            echo "✅ DB_PASSWORD detectado correctamente."
-          fi
-
-      # ---------------------------------------------------------------
       # 5 Start PostgreSQL via docker run
       # Using a step (not services:) so GitHub Secrets are available.
       # ---------------------------------------------------------------
       - name: Start PostgreSQL
+        env:
+          POSTGRES_DB: ${{ secrets.DB_NAME }}
+          POSTGRES_USER: ${{ secrets.DB_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
+          : "${POSTGRES_DB:?Missing GitHub secret DB_NAME}"
+          : "${POSTGRES_USER:?Missing GitHub secret DB_USER}"
+          : "${POSTGRES_PASSWORD:?Missing GitHub secret DB_PASSWORD}"
           docker run -d \
             --name postgres \
-            -e POSTGRES_DB="${{ secrets.DB_NAME }}" \
-            -e POSTGRES_USER="${{ secrets.DB_USER }}" \
-            -e POSTGRES_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            -e POSTGRES_DB="$POSTGRES_DB" \
+            -e POSTGRES_USER="$POSTGRES_USER" \
+            -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
             -p 5434:5432 \
             postgres:16-alpine
 
           echo "Waiting for PostgreSQL to be ready..."
           for i in {1..15}; do
-            if docker exec postgres pg_isready -U "${{ secrets.DB_USER }}" > /dev/null 2>&1; then
+            if docker exec postgres pg_isready -U "$POSTGRES_USER" > /dev/null 2>&1; then
               echo "PostgreSQL is ready!"
               exit 0
             fi
@@ -142,19 +132,86 @@ jobs:
           path: build/libs/*.jar
           retention-days: 14
 
-      # ---------------------------------------------------------------
-      # 9 OPTIONAL: Build and push Docker image (push events only)
-      # ---------------------------------------------------------------
-      - name: Build Docker image
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
-        run: docker build -t acm-ecommerce:${{ github.sha }} .
+  deploy-ecs:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.ECS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-2
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Push Docker image to GHCR
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
-        env:
-          REGISTRY: ghcr.io
-          IMAGE_NAME: ${{ github.repository }}
+      - name: Download built application JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: application-artifact
+          path: build/libs
+
+      - name: Validate deployment variables
+        shell: bash
         run: |
-          echo ${{ secrets.GITHUB_TOKEN }} | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
-          docker tag acm-ecommerce:${{ github.sha }} $REGISTRY/$IMAGE_NAME:${{ github.sha }}
-          docker push $REGISTRY/$IMAGE_NAME:${{ github.sha }}
+          for variable in ECR_REPOSITORY ECS_CLUSTER ECS_SERVICE AWS_DEPLOY_ROLE_ARN; do
+            if [[ -z "${!variable}" ]]; then
+              echo "Missing GitHub Actions variable: $variable"
+              exit 1
+            fi
+          done
+          if grep -q 'REPLACE_WITH_' ecs/task-definition.json; then
+            echo "Replace the ECS role and database-secret placeholders in ecs/task-definition.json."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: github-${{ github.run_id }}
+
+      - name: Build and push image to ECR
+        id: image
+        shell: bash
+        run: |
+          account_id=$(aws sts get-caller-identity --query Account --output text)
+          registry="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          image_uri="${registry}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$registry"
+          docker build --platform linux/amd64 --tag "$image_uri" .
+          docker push "$image_uri"
+          echo "uri=$image_uri" >> "$GITHUB_OUTPUT"
+
+      - name: Register task definition and deploy service
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+        run: |
+          task_definition="$RUNNER_TEMP/task-definition.json"
+          jq --arg image "$IMAGE_URI" \
+            '(.containerDefinitions[] | select(.name == "acm-ecommerce").image) = $image' \
+            ecs/task-definition.json > "$task_definition"
+
+          task_definition_arn=$(aws ecs register-task-definition \
+            --cli-input-json "file://${task_definition}" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$task_definition_arn" \
+            --region "$AWS_REGION"
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"
