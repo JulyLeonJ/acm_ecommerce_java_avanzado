@@ -1,6 +1,6 @@
 # Despliegue privado en ECS/Fargate
 
-La región del proyecto es `us-east-2`. La API se mantendrá privada, como se acordó. La infraestructura está preparada; el servicio ECS permanece en `desiredCount=0` hasta que la versión de este workflow se publique en GitHub y el job de despliegue se habilite.
+La región del proyecto es `us-east-2`. La API se mantiene privada, como se acordó. La infraestructura y el CodeBuild Runner están configurados; el servicio está ejecutando una tarea después del despliegue inicial.
 
 ## Recursos necesarios
 
@@ -10,7 +10,7 @@ La región del proyecto es `us-east-2`. La API se mantendrá privada, como se ac
 4. Existe RDS PostgreSQL 18.3 `db.t4g.micro`, Single-AZ, 20 GB gp3, cifrada, no pública y con contraseña administrada por RDS/Secrets Manager. El Security Group de RDS acepta TCP 5432 solo desde las tareas.
 5. Existe el ECS task execution role con permisos para descargar de ECR, enviar logs y leer el secreto RDS. La aplicación no llama a APIs AWS, así que no necesita permisos adicionales en un task role.
 6. Existe `/ecs/acm-ecommerce` en CloudWatch Logs con retención de 7 días.
-7. Existen el cluster `acm-ecommerce`, la definición de tarea inicial y el servicio Fargate `acm-ecommerce`. El servicio está en `desiredCount=0` hasta que el pipeline publique una imagen válida.
+7. Existen el cluster `acm-ecommerce`, la definición de tarea y el servicio Fargate `acm-ecommerce`. El servicio mantiene una tarea deseada.
 8. Existe un ALB **interno** y un target group de tipo `ip`; el health check es `/actuator/health/readiness`. No hay listener público. El Security Group de tareas acepta tráfico solo desde el Security Group del ALB.
 
 La VPC predeterminada tenía subredes públicas en tres AZ. Se añadieron subredes privadas en `us-east-2a` y `us-east-2b` con salida por un NAT Gateway en `us-east-2a`. Las tareas no reciben IP pública; RDS y ECS usan las subredes privadas.
@@ -29,7 +29,7 @@ Las siguientes variables ya están configuradas en **Settings > Secrets and vari
 - `ECR_REPOSITORY`: `acm-ecommerce`.
 - `ECS_CLUSTER`: `acm-ecommerce`.
 - `ECS_SERVICE`: `acm-ecommerce`.
-- `ECS_DEPLOY_ENABLED`: actualmente `false`; solo se activará cuando el cambio local del workflow esté en GitHub.
+- `ECS_DEPLOY_ENABLED`: `true`; el workflow ya se ejecutó correctamente en `main`.
 
 El job de CI usa un PostgreSQL temporal. Ya están configurados los GitHub Actions secrets `DB_NAME`, `DB_USER` y `DB_PASSWORD`; no contienen las credenciales productivas. El job de despliegue corre en el CodeBuild runner, publica la imagen en ECR con el SHA del commit y actualiza el servicio ECS. No necesita `id-token: write` ni access keys AWS en GitHub.
 
@@ -45,7 +45,7 @@ Otra posibilidad es mover toda la orquestación a CodePipeline + CodeConnections
 
 ## Acceso y validación
 
-Al ser interno, el DNS del ALB no se podrá abrir desde Internet ni desde una laptop sin conectividad privada a la VPC. Valida el despliegue revisando la salud del target group y los logs de CloudWatch; para hacer peticiones HTTP desde fuera de la VPC necesitarás una conexión privada aprobada, como VPN o un bastion controlado.
+El ALB interno es `internal-acm-ecommerce-internal-412399010.us-east-2.elb.amazonaws.com`. No se puede abrir desde Internet ni desde una laptop sin conectividad privada a la VPC. El target group está saludable y `/actuator/health/readiness` valida que Spring y PostgreSQL estén listos. Para llamar otras rutas desde tu laptop necesitarás una conexión privada aprobada, como VPN o un bastion controlado.
 
 La ruta `/actuator/health/readiness` incluye el estado de PostgreSQL. No publiques la API hasta implementar autenticación y autorización: `DisableCsrf.java` permite actualmente todas las rutas sin autenticación y desactiva CSRF.
 
